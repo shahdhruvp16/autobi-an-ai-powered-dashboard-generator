@@ -1,0 +1,95 @@
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF--8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AutoBI – AI-Powered Data-to-Dashboard Generator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+      :root {
+        scroll-behavior: smooth;
+      }
+      body {
+        font-family: 'Inter', sans-serif;
+      }
+      .animated-gradient {
+        background-size: 300% 300%;
+        animation: gradient-animation 15s ease infinite;
+      }
+      @keyframes gradient-animation {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+      }
+      .float-animation {
+        animation: float-animation 6s ease-in-out infinite;
+      }
+      @keyframes float-animation {
+        0% { transform: translateY(0px); }
+        50% { transform: translateY(-10px); }
+        100% { transform: translateY(0px); }
+      }
+      .fade-in {
+        animation: fade-in 0.5s ease-in-out forwards;
+      }
+      @keyframes fade-in {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .stagger-fade-in {
+        animation: fade-in 0.5s ease-in-out forwards;
+        opacity: 0;
+      }
+      .glassmorphism {
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      .dark .glassmorphism {
+        background: rgba(30, 41, 59, 0.1); /* bg-slate-800 with opacity */
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      .glowing-text {
+        animation: glowing-text-animation 2s ease-in-out infinite;
+      }
+      @keyframes glowing-text-animation {
+        0%, 100% { text-shadow: 0 0 5px #00FFFF, 0 0 10px #00FFFF; }
+        50% { text-shadow: 0 0 10px #00FFFF, 0 0 20px #A855F7; }
+      }
+      .glowing-border {
+         animation: glowing-border-animation 4s linear infinite;
+      }
+      @keyframes glowing-border-animation {
+        0% { box-shadow: 0 0 5px #A855F7; }
+        50% { box-shadow: 0 0 20px #007BFF; }
+        100% { box-shadow: 0 0 5px #A855F7; }
+      }
+      .animation-delay-4000 {
+        animation-delay: 4s;
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.26.0",
+    "recharts": "https://aistudiocdn.com/recharts@^3.3.0",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "papaparse": "https://aistudiocdn.com/papaparse@^5.5.3"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body class="bg-gray-900 text-gray-200">
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>

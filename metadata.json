@@ -1,0 +1,5 @@
+{
+  "name": "AutoBI – AI-Powered Data-to-Dashboard Generator",
+  "description": "AutoBI is an AI-driven data intelligence platform that automatically transforms a user’s raw CSV data into a beautiful, interactive analytical dashboard.",
+  "requestFramePermissions": []
+}
