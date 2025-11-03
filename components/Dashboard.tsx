@@ -11,10 +11,7 @@ import {
     XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend,
 } from 'recharts';
 import type { Template, AnalysisResult, CsvData, ChartSuggestion, ChartType, CsvRow } from '../types';
-
-// --- Helper Functions & Services (Mocks) ---
-const exportForPowerBI = (analysis: AnalysisResult, data: CsvData, fileName: string) => { console.log("Exporting for Power BI:", { analysis, data, fileName }); /* Mock implementation */ };
-const exportForTableau = (analysis: AnalysisResult, fileName: string) => { console.log("Exporting for Tableau:", { analysis, fileName }); /* Mock implementation */ };
+import { exportForPowerBI, exportForTableau } from '../services/exportService';
 
 // --- Icon Components ---
 const DownloadIcon = (props: React.SVGProps<SVGSVGElement>) => <svg {...props} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>;
