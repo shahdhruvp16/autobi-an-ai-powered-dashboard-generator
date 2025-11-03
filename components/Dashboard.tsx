@@ -1,459 +1,336 @@
-
-import React, { useState, useMemo } from 'react';
+import React, { useCallback, useMemo, useRef, useState, useEffect } from 'react';
+import html2canvas from 'html2canvas';
+import jsPDF from 'jspdf';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
-  ResponsiveContainer,
-  LineChart, Line, AreaChart, Area,
-  BarChart, Bar,
-  ScatterChart, Scatter,
-  PieChart, Pie, Cell,
-  FunnelChart, Funnel, Tooltip as RechartsTooltip,
-  XAxis, YAxis, CartesianGrid, Legend,
+    ResponsiveContainer,
+    LineChart, Line, AreaChart, Area,
+    BarChart, Bar,
+    PieChart, Pie, Cell,
+    ScatterChart, Scatter,
+    XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend,
 } from 'recharts';
 import type { Template, AnalysisResult, CsvData, ChartSuggestion, ChartType, CsvRow } from '../types';
-import { ArrowLeftIcon, DownloadIcon, ChevronDownIcon } from './icons';
-import { exportForPowerBI, exportForTableau } from '../services/exportService';
-import Modal from './Modal';
 
+// --- Helper Functions & Services (Mocks) ---
+const exportForPowerBI = (analysis: AnalysisResult, data: CsvData, fileName: string) => { console.log("Exporting for Power BI:", { analysis, data, fileName }); /* Mock implementation */ };
+const exportForTableau = (analysis: AnalysisResult, fileName: string) => { console.log("Exporting for Tableau:", { analysis, fileName }); /* Mock implementation */ };
 
-interface DashboardProps {
-  data: CsvData;
-  fileName: string;
-  analysis: AnalysisResult;
-  template: Template;
-  onReset: () => void;
-}
+// --- Icon Components ---
+const DownloadIcon = (props: React.SVGProps<SVGSVGElement>) => <svg {...props} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>;
+const ChevronDownIcon = (props: React.SVGProps<SVGSVGElement>) => <svg {...props} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>;
+const LightBulbIcon = (props: React.SVGProps<SVGSVGElement>) => <svg {...props} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 18v-5.25m0 0a6.01 6.01 0 001.5-11.62A6.01 6.01 0 0012 1.25a6.01 6.01 0 00-1.5 11.62v5.25m-3.75 0h7.5a.75.75 0 010 1.5h-7.5a.75.75 0 010-1.5z" /></svg>;
+const EyeIcon = (props: React.SVGProps<SVGSVGElement>) => <svg {...props} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>;
+const Modal = ({ title, children, onClose }: { title: string, children: React.ReactNode, onClose: () => void }) => (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-6 w-full max-w-md">
+            <h2 className="text-lg font-bold text-white mb-4">{title}</h2>
+            <div className="text-slate-300">{children}</div>
+            <button onClick={onClose} className="mt-6 bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-4 rounded w-full">Close</button>
+        </div>
+    </motion.div>
+);
 
-// Data transformation for complex charts
-const transformForGroupedOrStacked = (data: CsvData, categoryKey: string, groupKey: string, valueKey: string) => {
-    if (!categoryKey || !groupKey || !valueKey) return [];
+// =================================================================================
+//  1. SUB-COMPONENT: KPI Card
+// =================================================================================
+const formatNumber = (v: number) => {
+    if (Math.abs(v) > 1000000) return (v / 1000000).toFixed(1) + 'M';
+    if (Math.abs(v) > 1000) return (v / 1000).toFixed(1) + 'K';
+    return v.toLocaleString();
+};
+const KPI: React.FC<{ title: string; value: number; series?: number[]; color: string }> = ({ title, value, series = [], color }) => {
+    const trend = series.length >= 2 ? series[series.length - 1] - series[0] : 0;
+    const trendPercentage = series[0] ? (trend / series[0]) * 100 : 0;
+    const trendColor = trend >= 0 ? 'text-emerald-400' : 'text-rose-400';
+    const trendSign = trend >= 0 ? '▲' : '▼';
+    return (
+        <div className="bg-slate-800 p-4 rounded-lg border border-slate-700 h-full">
+            <h4 className="text-sm text-slate-400 truncate">{title}</h4>
+            <div className="mt-2 flex items-end justify-between gap-4">
+                <div>
+                    <div className="text-3xl font-bold text-slate-100">{formatNumber(value)}</div>
+                    {series.length > 1 && (
+                        <div className={`mt-1 text-xs font-medium flex items-center gap-1 ${trendColor}`}>
+                            {trendSign} {Math.abs(trendPercentage).toFixed(1)}%
+                        </div>
+                    )}
+                </div>
+                <div className="w-20 h-10">
+                    <ResponsiveContainer width="100%" height="100%"><LineChart data={series.map(s => ({ value: s }))}><Line type="monotone" dataKey="value" stroke={color} strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer>
+                </div>
+            </div>
+        </div>
+    );
+};
 
+// =================================================================================
+//  2. SUB-COMPONENT: Recharts Chart Renderer
+// =================================================================================
+const transformForGrouped = (data: CsvData, categoryKey: string, groupKey: string, valueKey: string) => {
+    if (!categoryKey || !groupKey || !valueKey) return { transformedData: [], groupKeys: [] };
+    const groupKeys = Array.from(new Set(data.map(row => String(row[groupKey])))).sort();
     const groupedData = data.reduce<Record<string, CsvRow>>((acc, row) => {
-        const category = row[categoryKey];
-        const group = row[groupKey];
+        const category = String(row[categoryKey]);
+        const group = String(row[groupKey]);
         const value = Number(row[valueKey]) || 0;
-
-        if (!acc[category]) {
-            acc[category] = { [categoryKey]: category };
-        }
-        // FIX: Explicitly cast the accumulator value to a number before adding to prevent type errors.
+        if (!acc[category]) acc[category] = { [categoryKey]: category };
         acc[category][group] = (Number(acc[category][group]) || 0) + value;
         return acc;
     }, {});
-    
-    return Object.values(groupedData);
+    return { transformedData: Object.values(groupedData), groupKeys };
+};
+const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+        return (
+            <div className="bg-slate-800 border border-slate-600 p-3 rounded-md shadow-lg"><p className="label text-sm font-medium text-slate-300">{`${label}`}</p>
+                {payload.map((p: any, index: number) => (<p key={index} style={{ color: p.color }} className="intro text-sm">{`${p.name}: ${p.value.toLocaleString()}`}</p>))}
+            </div>
+        );
+    }
+    return null;
+};
+const RenderChart: React.FC<{ chart: ChartSuggestion; data: CsvData; color: string; type: ChartType }> = ({ chart, data, color, type }) => {
+    const chartComponent = useMemo(() => {
+        const commonProps = { margin: { top: 5, right: 20, left: 0, bottom: 20 } };
+        const commonGrid = <CartesianGrid strokeDasharray="3 3" stroke="#475569" />;
+        const commonXAxis = <XAxis dataKey={chart.x_axis} name={chart.x_axis ?? undefined} stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} interval="preserveStartEnd" />;
+        const commonYAxis = <YAxis dataKey={chart.y_axis} name={chart.y_axis ?? undefined} stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />;
+        const commonTooltip = <RechartsTooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(100, 116, 139, 0.1)' }} />;
+        const COLORS = ['#38bdf8', '#fb923c', '#a78bfa', '#4ade80', '#f472b6', '#2dd4bf', '#facc15', '#a3a3a3'];
+
+        switch (type) {
+            case 'line':
+                return <LineChart data={data} {...commonProps}>{commonGrid}{commonXAxis}{commonYAxis}{commonTooltip}<Line type="monotone" dataKey={chart.y_axis} name={chart.y_axis} stroke={color} strokeWidth={2} dot={false} /></LineChart>;
+            case 'bar':
+                return <BarChart data={data} {...commonProps}>{commonGrid}{commonXAxis}{commonYAxis}{commonTooltip}<Bar dataKey={chart.y_axis} name={chart.y_axis} fill={color} radius={[4, 4, 0, 0]} /></BarChart>;
+            case 'area':
+                return <AreaChart data={data} {...commonProps}>{commonGrid}{commonXAxis}{commonYAxis}{commonTooltip}<defs><linearGradient id={`color-${chart.y_axis}`} x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={color} stopOpacity={0.8} /><stop offset="95%" stopColor={color} stopOpacity={0} /></linearGradient></defs><Area type="monotone" dataKey={chart.y_axis} name={chart.y_axis} stroke={color} fill={`url(#color-${chart.y_axis})`} strokeWidth={2} /></AreaChart>;
+            
+            case 'grouped-bar': {
+                if (!chart.x_axis || !chart.grouping_column) return <div className="text-center text-slate-400">Grouped-bar chart requires an X-axis and a Grouping Column.</div>;
+                const { transformedData, groupKeys } = transformForGrouped(data, chart.x_axis, chart.grouping_column, chart.y_axis);
+                return <BarChart data={transformedData} {...commonProps}>{commonGrid}{commonXAxis}{commonYAxis}{commonTooltip}<Legend iconSize={10} wrapperStyle={{ fontSize: '12px', color: '#94a3b8' }} />{groupKeys.map((key, index) => <Bar key={key} dataKey={key} fill={COLORS[index % COLORS.length]} radius={[4, 4, 0, 0]} />)}</BarChart>;
+            }
+            
+            case 'stacked-bar': {
+                if (!chart.x_axis || !chart.grouping_column) return <div className="text-center text-slate-400">Stacked-bar chart requires an X-axis and a Grouping Column.</div>;
+                const { transformedData, groupKeys } = transformForGrouped(data, chart.x_axis, chart.grouping_column, chart.y_axis);
+                return <BarChart data={transformedData} {...commonProps}>{commonGrid}{commonXAxis}{commonYAxis}{commonTooltip}<Legend iconSize={10} wrapperStyle={{ fontSize: '12px', color: '#94a3b8' }} />{groupKeys.map((key, index) => <Bar key={key} dataKey={key} fill={COLORS[index % COLORS.length]} stackId="a" />)}</BarChart>;
+            }
+
+            case 'scatter': {
+                if (!chart.x_axis) return <div className="text-center text-slate-400">Scatter plot requires an X-axis.</div>;
+                const scatterXAxis = <XAxis type="number" dataKey={chart.x_axis} name={chart.x_axis} stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />;
+                return <ScatterChart {...commonProps}>{commonGrid}{scatterXAxis}{commonYAxis}{commonTooltip}<Scatter name={chart.title} data={data} fill={color} /></ScatterChart>;
+            }
+
+            case 'pie': {
+                const pieData = data.slice(0, 8).map(r => ({ name: r[chart.x_axis!], value: Number(r[chart.y_axis!]) || 0 }));
+                return <PieChart><RechartsTooltip content={<CustomTooltip />} /><Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} fill={color}>{pieData.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}</Pie><Legend iconSize={10} wrapperStyle={{ fontSize: '12px', color: '#94a3b8' }} /></PieChart>;
+            }
+
+            case 'donut': {
+                const pieData = data.slice(0, 8).map(r => ({ name: r[chart.x_axis!], value: Number(r[chart.y_axis!]) || 0 }));
+                return <PieChart><RechartsTooltip content={<CustomTooltip />} /><Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={60} outerRadius={80} fill={color} paddingAngle={5}>{pieData.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}</Pie><Legend iconSize={10} wrapperStyle={{ fontSize: '12px', color: '#94a3b8' }} /></PieChart>;
+            }
+            
+            default:
+                return <div className="text-center text-slate-400">Chart type '{type}' not supported.</div>;
+        }
+    }, [chart, data, color, type]);
+
+    return <ResponsiveContainer width="100%" height="100%">{chartComponent}</ResponsiveContainer>;
 };
 
-const KPIComponent: React.FC<{
-    data: CsvData;
-    chartInfo: ChartSuggestion;
-    colors: string[];
-}> = ({ data, chartInfo, colors }) => {
-    const { y_axis } = chartInfo;
-
-    const kpiValue = useMemo(() => {
-        return data.reduce((sum, row) => sum + (Number(row[y_axis]) || 0), 0);
-    }, [data, y_axis]);
-
-    // Sanitize color for use in SVG id
-    const gradientId = `kpiGradient-${colors[0].replace(/#/g, '')}`;
+// =================================================================================
+//  3. SUB-COMPONENT: Chart Card Wrapper (with Type Switcher)
+// =================================================================================
+const getCompatibleChartTypes = (originalType: ChartType): ChartType[] => {
+    switch (originalType) {
+        case 'line': return ['line', 'bar', 'area', 'scatter'];
+        case 'bar': return ['bar', 'line', 'area'];
+        case 'area': return ['area', 'line', 'bar'];
+        case 'grouped-bar': return ['grouped-bar', 'stacked-bar'];
+        case 'stacked-bar': return ['stacked-bar', 'grouped-bar'];
+        case 'pie': return ['pie', 'donut'];
+        case 'donut': return ['donut', 'pie'];
+        case 'scatter': return ['scatter', 'line'];
+        default: return [originalType];
+    }
+};
+const ChartCard: React.FC<{ chart: ChartSuggestion; data: CsvData; color: string }> = ({ chart, data, color }) => {
+    const compatibleTypes = chart.compatibleChartTypes?.length ? chart.compatibleChartTypes : getCompatibleChartTypes(chart.chartType);
+    const [activeChartType, setActiveChartType] = useState<ChartType>(chart.chartType);
+    
+    useEffect(() => {
+        if (!compatibleTypes.includes(activeChartType)) {
+            setActiveChartType(chart.chartType);
+        }
+    }, [chart.chartType, compatibleTypes, activeChartType]);
 
     return (
-        <div className="relative w-full h-full flex flex-col justify-start p-6">
-            <div 
-                className="absolute text-5xl md:text-6xl font-bold z-10" 
-                style={{ color: colors[0], top: '45%', transform: 'translateY(-50%)' }}
-            >
-                {kpiValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-            </div>
-            
-            <div className="absolute bottom-0 left-0 w-full h-2/3 opacity-60 z-0">
-                <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart 
-                        data={data}
-                        margin={{ top: 10, right: 0, left: 0, bottom: 0 }}
-                    >
-                        <defs>
-                            <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor={colors[0]} stopOpacity={0.4}/>
-                                <stop offset="95%" stopColor={colors[0]} stopOpacity={0}/>
-                            </linearGradient>
-                        </defs>
-                        <Area 
-                            type="monotone" 
-                            dataKey={y_axis} 
-                            stroke={colors[0]} 
-                            strokeWidth={3} 
-                            fill={`url(#${gradientId})`} 
-                        />
-                    </AreaChart>
-                </ResponsiveContainer>
-            </div>
-        </div>
-    );
-};
-
-const ChartComponent: React.FC<{
-  chartInfo: ChartSuggestion;
-  currentChartType: ChartType;
-  onChartTypeChange: (type: ChartType) => void;
-  data: CsvData;
-  colors: string[];
-}> = ({ chartInfo, currentChartType, onChartTypeChange, data, colors }) => {
-  const { title, x_axis, y_axis, grouping_column, compatibleChartTypes } = chartInfo;
-  const [isSelectorOpen, setIsSelectorOpen] = useState(false);
-
-  const renderChart = () => {
-    const chartProps = {
-        margin: { top: 20, right: 20, left: -10, bottom: 5 },
-    };
-
-    if (data.length === 0) {
-        return <div className="flex items-center justify-center h-full text-gray-500">No data for this selection.</div>
-    }
-
-    switch (currentChartType) {
-      case 'line':
-      case 'area':
-        const ChartComponent = currentChartType === 'line' ? LineChart : AreaChart;
-        const DataComponent = currentChartType === 'line' ? Line : Area;
-        return (
-          <ChartComponent data={data} {...chartProps}>
-            <defs>
-              <linearGradient id={`colorGradient-${colors[0].replace(/#/g, '')}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor={colors[0]} stopOpacity={0.8}/>
-                <stop offset="95%" stopColor={colors[0]} stopOpacity={0}/>
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2} />
-            <XAxis dataKey={x_axis || undefined} stroke="currentColor" fontSize={12} tickLine={false} axisLine={false} />
-            <YAxis stroke="currentColor" fontSize={12} tickLine={false} axisLine={false} />
-            <RechartsTooltip contentStyle={{ backgroundColor: 'rgba(30, 41, 59, 0.8)', border: 'none', borderRadius: '0.5rem', color: '#fff' }} />
-            <Legend wrapperStyle={{fontSize: "12px"}}/>
-            <DataComponent type="monotone" dataKey={y_axis} stroke={colors[0]} strokeWidth={2} fillOpacity={1} fill={currentChartType === 'area' ? `url(#colorGradient-${colors[0].replace(/#/g, '')})` : undefined} activeDot={{ r: 8 }} dot={{ r: 4 }} />
-          </ChartComponent>
-        );
-      case 'bar':
-      case 'grouped-bar':
-      case 'stacked-bar':
-        const transformedData = (currentChartType === 'grouped-bar' || currentChartType === 'stacked-bar') && grouping_column && x_axis
-          ? transformForGroupedOrStacked(data, x_axis, grouping_column, y_axis) 
-          : data;
-        
-        const keys = (transformedData.length > 0 && x_axis) ? Object.keys(transformedData[0]).filter(k => k !== x_axis) : [];
-
-        return (
-          <BarChart data={transformedData} {...chartProps}>
-            <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2} />
-            <XAxis dataKey={x_axis || undefined} stroke="currentColor" fontSize={12} tickLine={false} axisLine={false} />
-            <YAxis stroke="currentColor" fontSize={12} tickLine={false} axisLine={false}/>
-            <RechartsTooltip contentStyle={{ backgroundColor: 'rgba(30, 41, 59, 0.8)', border: 'none', borderRadius: '0.5rem', color: '#fff' }} />
-            <Legend wrapperStyle={{fontSize: "12px"}}/>
-            {keys.map((key, index) => (
-                <Bar key={key} dataKey={key} fill={colors[index % colors.length]} radius={[4, 4, 0, 0]} stackId={currentChartType === 'stacked-bar' ? 'a' : undefined} />
-            ))}
-          </BarChart>
-        );
-      case 'scatter':
-        return (
-          <ScatterChart {...chartProps}>
-            <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2}/>
-            <XAxis type="number" dataKey={grouping_column || x_axis || undefined} name={grouping_column || x_axis || ''} stroke="currentColor" fontSize={12} />
-            <YAxis type="number" dataKey={y_axis} name={y_axis} stroke="currentColor" fontSize={12}/>
-            <RechartsTooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ backgroundColor: 'rgba(30, 41, 59, 0.8)', border: 'none', borderRadius: '0.5rem', color: '#fff' }} />
-            <Scatter name={title} data={data} fill={colors[0]} />
-          </ScatterChart>
-        );
-      case 'pie':
-      case 'donut':
-        if (!x_axis) return null;
-        const pieData = data.reduce((acc, item) => {
-            const name = item[x_axis] as string;
-            const value = (item[y_axis] as number) || 0;
-            const existing = acc.find(d => d.name === name);
-            if (existing) {
-                existing.value += value;
-            } else {
-                acc.push({ name, value });
-            }
-            return acc;
-        }, [] as {name: string, value: number}[]).sort((a,b) => b.value - a.value).slice(0, 10);
-
-        return (
-            <PieChart {...chartProps}>
-                <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={currentChartType === 'donut' ? 60 : 0} outerRadius={90} paddingAngle={2}>
-                    {pieData.map((_entry, index) => (
-                        <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />
-                    ))}
-                </Pie>
-                <RechartsTooltip contentStyle={{ backgroundColor: 'rgba(30, 41, 59, 0.8)', border: 'none', borderRadius: '0.5rem', color: '#fff' }}/>
-                <Legend iconSize={10} wrapperStyle={{fontSize: "12px"}} />
-            </PieChart>
-        );
-      case 'funnel':
-        if (!x_axis) return null;
-        const funnelData = data.map(row => ({
-            name: row[x_axis] as string,
-            value: Number(row[y_axis]) || 0,
-            fill: colors[Math.floor(Math.random() * colors.length)]
-        })).sort((a, b) => b.value - a.value);
-
-        return (
-            <FunnelChart {...chartProps}>
-                <RechartsTooltip contentStyle={{ backgroundColor: 'rgba(30, 41, 59, 0.8)', border: 'none', borderRadius: '0.5rem', color: '#fff' }}/>
-                <Funnel dataKey="value" data={funnelData} isAnimationActive>
-                    {funnelData.map((_entry, index) => (
-                        <Cell key={`cell-${index}`} fill={colors[index % colors.length]}/>
-                    ))}
-                </Funnel>
-            </FunnelChart>
-        )
-      // KPI case is handled outside this function
-      default:
-        return <div>Unsupported chart type</div>;
-    }
-  };
-
-  const capitalize = (s: string) => s.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-
-  return (
-    <div className="glassmorphism rounded-xl shadow-lg border border-white/10 h-full flex flex-col overflow-hidden">
-        <div className="flex justify-between items-start p-4 z-20">
-            <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200">{title}</h3>
-            <div className="relative">
-                <button
-                    onClick={() => setIsSelectorOpen(!isSelectorOpen)}
-                    className="flex items-center gap-1 px-2 py-1 text-xs bg-white/20 dark:bg-gray-700/50 rounded-md hover:bg-white/40 dark:hover:bg-gray-600/50"
-                >
-                    {capitalize(currentChartType)}
-                    <ChevronDownIcon className={`w-4 h-4 transition-transform ${isSelectorOpen ? 'rotate-180' : ''}`} />
-                </button>
-                {isSelectorOpen && (
-                    <div 
-                        className="absolute top-full right-0 mt-1 w-40 bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-md shadow-lg z-30 fade-in"
-                        onMouseLeave={() => setIsSelectorOpen(false)}
-                    >
-                        {compatibleChartTypes.map(type => (
-                            <button
-                                key={type}
-                                onClick={() => {
-                                    onChartTypeChange(type);
-                                    setIsSelectorOpen(false);
-                                }}
-                                className={`block w-full text-left px-3 py-2 text-sm ${currentChartType === type ? 'font-semibold text-blue-600 dark:text-blue-400' : 'text-gray-700 dark:text-gray-300'} hover:bg-gray-100 dark:hover:bg-gray-700`}
-                            >
-                                {capitalize(type)}
-                            </button>
-                        ))}
-                    </div>
+        <div className="bg-slate-800 rounded-lg border border-slate-700 p-4 h-96 flex flex-col">
+            <div className="flex justify-between items-center mb-4 gap-2">
+                <h3 className="text-base font-semibold text-slate-200 truncate pr-2">{chart.title}</h3>
+                {compatibleTypes.length > 1 && (
+                    <select value={activeChartType} onChange={(e) => setActiveChartType(e.target.value as ChartType)} className="bg-slate-700 border border-slate-600 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        {compatibleTypes.map(type => <option key={type} value={type} className="capitalize bg-slate-800">{type.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}</option>)}
+                    </select>
                 )}
             </div>
+            <div className="flex-grow"><RenderChart chart={chart} data={data} color={color} type={activeChartType} /></div>
         </div>
-        
-        <div className="flex-grow -mt-12">
-            {currentChartType === 'kpi' ? (
-                <KPIComponent data={data} chartInfo={chartInfo} colors={colors} />
-            ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                    {renderChart()}
-                </ResponsiveContainer>
-            )}
-        </div>
-    </div>
-  );
-};
-
-const Dashboard: React.FC<DashboardProps> = ({ data, fileName, analysis, template, onReset }) => {
-  const [isExporting, setIsExporting] = useState<false | 'powerbi' | 'tableau'>(false);
-  const [modalContent, setModalContent] = useState<{ title: string; body: React.ReactNode } | null>(null);
-  const [activeFilters, setActiveFilters] = useState<Record<string, string>>({});
-  
-  const initialChartTypes = useMemo(() => 
-    analysis.chartSuggestions.map(suggestion => suggestion.chartType), 
-    [analysis.chartSuggestions]
-  );
-  const [chartTypes, setChartTypes] = useState<ChartType[]>(initialChartTypes);
-
-  const handleChartTypeChange = (index: number, type: ChartType) => {
-    const newChartTypes = [...chartTypes];
-    newChartTypes[index] = type;
-    setChartTypes(newChartTypes);
-  };
-
-  const filterOptions = useMemo(() => {
-    const options: Record<string, string[]> = {};
-    if (analysis.filterableColumns) {
-      for (const column of analysis.filterableColumns) {
-        const uniqueValues = Array.from(new Set(data.map(row => String(row[column])))).sort();
-        options[column] = ['All', ...uniqueValues];
-      }
-    }
-    return options;
-  }, [data, analysis.filterableColumns]);
-
-  const filteredData = useMemo(() => {
-      return data.filter(row => {
-          return Object.entries(activeFilters).every(([key, value]) => {
-              if (value === 'All') return true;
-              return String(row[key]) === value;
-          });
-      });
-  }, [data, activeFilters]);
-
-  const handleFilterChange = (column: string, value: string) => {
-    setActiveFilters(prev => ({ ...prev, [column]: value }));
-  };
-
-  const handlePowerBIExport = async () => {
-    setIsExporting('powerbi');
-    await new Promise(res => setTimeout(res, 500)); // Simulate processing
-    exportForPowerBI(analysis, data, fileName);
-    setIsExporting(false);
-    setModalContent({
-        title: "Power BI Export Guide Downloaded!",
-        body: (
-            <div className="text-sm text-gray-600 dark:text-gray-300 space-y-3">
-                <p>A JSON file (<code className="text-xs bg-gray-200 dark:bg-gray-700 p-1 rounded">AutoBI_PowerBI_Guide.json</code>) has been downloaded.</p>
-                <p>Follow these steps in Power BI Desktop:</p>
-                <ol className="list-decimal list-inside space-y-2 pl-2">
-                    <li>Go to <span className="font-semibold">Get data</span> and connect to your original CSV file (<code className="text-xs bg-gray-200 dark:bg-gray-700 p-1 rounded">{fileName}</code>).</li>
-                    <li>Open the downloaded JSON file in a text editor.</li>
-                    <li>Use the <code className="text-xs bg-gray-200 dark:bg-gray-700 p-1 rounded">chartSuggestions</code> and <code className="text-xs bg-gray-200 dark:bg-gray-700 p-1 rounded">insights</code> in the file as a guide to build your visuals and text boxes.</li>
-                </ol>
-            </div>
-        )
-    });
-  };
-
-  const handleTableauExport = async () => {
-    setIsExporting('tableau');
-    await new Promise(res => setTimeout(res, 1000)); // Simulate processing
-    exportForTableau(analysis, fileName);
-    setIsExporting(false);
-    setModalContent({
-        title: "Tableau Workbook Downloaded!",
-        body: (
-            <div className="text-sm text-gray-600 dark:text-gray-300 space-y-3">
-                <p>A Tableau Workbook file (<code className="text-xs bg-gray-200 dark:bg-gray-700 p-1 rounded">AutoBI_Tableau_Dashboard.twb</code>) has been downloaded.</p>
-                <p>Follow these steps in Tableau Desktop:</p>
-                <ol className="list-decimal list-inside space-y-2 pl-2">
-                    <li>Make sure your original CSV file (<code className="text-xs bg-gray-200 dark:bg-gray-700 p-1 rounded">{fileName}</code>) is in the <span className="font-semibold">same folder</span> as the downloaded <code className="text-xs bg-gray-200 dark:bg-gray-700 p-1 rounded">.twb</code> file.</li>
-                    <li>Double-click the <code className="text-xs bg-gray-200 dark:bg-gray-700 p-1 rounded">.twb</code> file to open it.</li>
-                    <li>Tableau will automatically connect to the CSV and load the pre-built worksheets for each suggested chart.</li>
-                    <li>If prompted, locate the CSV file to fix the data connection.</li>
-                </ol>
-            </div>
-        )
-    });
-  };
-
-  const renderExportButton = (type: 'powerbi' | 'tableau', label: string, colorClasses: string, handler: () => void) => {
-    const isLoading = isExporting === type;
-    return (
-      <button 
-        onClick={handler}
-        disabled={!!isExporting}
-        className={`w-full sm:w-auto px-5 py-2.5 font-semibold text-white rounded-lg shadow-md transition-all transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100 flex items-center justify-center gap-2 ${colorClasses}`}
-      >
-        {isLoading ? (
-            <>
-                <div className="w-5 h-5 border-2 border-white/50 border-t-white rounded-full animate-spin"></div>
-                Exporting...
-            </>
-        ) : label}
-      </button>
     );
-  };
-  
-  return (
-    <>
-    {modalContent && (
-        <Modal title={modalContent.title} onClose={() => setModalContent(null)}>
-            {modalContent.body}
-        </Modal>
-    )}
-    <div className={`p-2 sm:p-6 rounded-lg min-h-screen text-gray-800 dark:text-gray-200 fade-in`}>
-       <style>{`:root { --primary-color: ${template.colors.primary}; --secondary-color: ${template.colors.secondary}; }`}</style>
-       <div className="absolute inset-0 -z-10" style={{ background: `radial-gradient(circle at top left, ${template.colors.primary}10, transparent 40%), radial-gradient(circle at bottom right, ${template.colors.secondary}10, transparent 40%)`}}></div>
-
-       <header className="flex flex-wrap gap-4 justify-between items-center mb-6 fade-in">
-         <h1 className="text-3xl sm:text-4xl font-bold" style={{ color: template.colors.primary }}>
-            {analysis.dataType} Dashboard
-         </h1>
-         <button onClick={onReset} className="flex items-center gap-2 px-4 py-2 bg-white/50 dark:bg-gray-800/50 text-gray-700 dark:text-gray-200 rounded-lg shadow hover:bg-white dark:hover:bg-gray-800 transition-colors">
-              <ArrowLeftIcon className="w-5 h-5" />
-              Start Over
-          </button>
-       </header>
-
-      <div className="mb-6 p-6 glassmorphism rounded-xl shadow-md fade-in" style={{animationDelay: '100ms'}}>
-        <h2 className="text-xl font-semibold mb-2" style={{ color: template.colors.primary }}>Executive Summary</h2>
-        <p className="text-md text-gray-600 dark:text-gray-300">{analysis.summary}</p>
-      </div>
-
-      {analysis.filterableColumns && analysis.filterableColumns.length > 0 && (
-        <div className="mb-6 p-4 glassmorphism rounded-xl shadow-md fade-in" style={{animationDelay: '200ms'}}>
-            <div className="flex flex-wrap items-center gap-4">
-                <h3 className="text-lg font-semibold" style={{ color: template.colors.primary }}>Filters:</h3>
-                {analysis.filterableColumns.map(column => (
-                    <div key={column}>
-                        <label htmlFor={`filter-${column}`} className="sr-only">{column}</label>
-                        <select
-                            id={`filter-${column}`}
-                            onChange={(e) => handleFilterChange(column, e.target.value)}
-                            className="bg-white/50 dark:bg-gray-800/50 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-2 focus:ring-offset-2"
-                            style={{ '--tw-ring-color': template.colors.primary } as React.CSSProperties}
-                        >
-                            {filterOptions[column].map(option => (
-                                <option key={option} value={option}>{option}</option>
-                            ))}
-                        </select>
-                    </div>
-                ))}
-            </div>
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-        {analysis.chartSuggestions.map((chartInfo, index) => (
-          <div key={index} className="stagger-fade-in h-80" style={{ animationDelay: `${300 + index * 100}ms`}}>
-            <ChartComponent 
-                chartInfo={chartInfo}
-                currentChartType={chartTypes[index]}
-                onChartTypeChange={(type) => handleChartTypeChange(index, type)}
-                data={filteredData}
-                colors={template.colors.chartFills} 
-            />
-          </div>
-        ))}
-      </div>
-      
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
-        <div className="md:col-span-3 glassmorphism p-6 rounded-xl shadow-lg border border-white/10 stagger-fade-in" style={{ animationDelay: '700ms' }}>
-            <h2 className="text-2xl font-semibold mb-4 border-b pb-2" style={{ borderColor: `${template.colors.primary}50` }}>
-                Pitch Deck Insights
-            </h2>
-            <ul className="list-none space-y-3">
-                {analysis.insights.map((insight, index) => (
-                <li key={index} className="flex items-start">
-                  <span className="text-xl mr-3 mt-1" style={{ color: template.colors.primary }}>›</span>
-                  {insight}
-                </li>
-                ))}
-            </ul>
-        </div>
-        <div className="md:col-span-2 glassmorphism p-6 rounded-xl shadow-lg border border-white/10 flex flex-col justify-center items-center stagger-fade-in" style={{ animationDelay: '800ms' }}>
-            <DownloadIcon className="w-16 h-16 mb-4" style={{color: template.colors.primary}}/>
-            <h2 className="text-2xl font-semibold mb-2 text-center">Export Dashboard</h2>
-            <p className="text-center mb-6 text-gray-500 dark:text-gray-400">Integrate with your favorite BI tools.</p>
-            <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-4">
-                {renderExportButton('powerbi', 'Power BI', 'bg-blue-600 hover:bg-blue-700', handlePowerBIExport)}
-                {renderExportButton('tableau', 'Tableau', 'bg-orange-500 hover:bg-orange-600', handleTableauExport)}
-            </div>
-        </div>
-      </div>
-    </div>
-    </>
-  );
 };
 
-export default Dashboard;
+// =================================================================================
+//  4. SUB-COMPONENT: Sidebar
+// =================================================================================
+const Sidebar: React.FC<{ analysis: AnalysisResult; data: CsvData; onFilterChange: React.Dispatch<React.SetStateAction<Record<string, string>>> }> = ({ analysis, data, onFilterChange }) => {
+    const filterOptions = useMemo(() => {
+        const opts: Record<string, string[]> = {};
+        analysis.filterableColumns?.forEach(col => {
+            const unique = Array.from(new Set(data.map(r => String(r[col] ?? '')))).sort();
+            opts[col] = ['All', ...unique];
+        });
+        return opts;
+    }, [data, analysis.filterableColumns]);
+    return (
+        <aside className="col-span-12 lg:col-span-3 bg-slate-800/50 p-5 rounded-lg border border-slate-700 h-fit">
+            <div className="flex items-center gap-3 mb-4"><LightBulbIcon className="w-6 h-6 text-yellow-400" /><h2 className="text-lg font-semibold text-slate-100">Key Insights</h2></div>
+            <ul className="text-sm space-y-2.5 text-slate-400 mb-6">{analysis.insights.slice(0, 5).map((insight, idx) => (<li key={idx} className="flex items-start gap-2"><span className="text-yellow-400 mt-1">&#8226;</span><span>{insight}</span></li>))}</ul>
+            {analysis.filterableColumns && analysis.filterableColumns.length > 0 && (<div className="border-t border-slate-700 pt-6"><h3 className="text-base font-semibold text-slate-200 mb-3">Filters</h3><div className="space-y-4">{analysis.filterableColumns.map(col => (<label key={col} className="block text-sm"><span className="text-xs font-medium text-slate-400">{col}</span><select aria-label={`Filter by ${col}`} className="mt-1 block w-full bg-slate-700 border border-slate-600 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" onChange={(e) => onFilterChange(prev => ({ ...prev, [col]: e.target.value }))}>{filterOptions[col].map(opt => <option key={opt} value={opt} className="bg-slate-800">{opt}</option>)}</select></label>))}</div></div>)}
+        </aside>
+    );
+};
+
+// =================================================================================
+//  5. SUB-COMPONENT: Dashboard Header (with Presentation Button)
+// =================================================================================
+const DashboardHeader: React.FC<{ analysis: AnalysisResult; template: Template; isProcessing: boolean; onExport: (format: 'png' | 'jpeg' | 'pdf') => void; onAdvancedExport: (type: 'powerbi' | 'tableau') => void; onReset: () => void; onTogglePresentation: () => void; }> = ({ analysis, template, isProcessing, onExport, onAdvancedExport, onReset, onTogglePresentation }) => {
+    const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
+    return (
+        <header className="flex flex-wrap items-center justify-between gap-4">
+            <div><h1 className="text-2xl font-bold" style={{ color: template.colors.primary }}>{analysis.dataType} Dashboard</h1><p className="text-sm text-gray-400 mt-1 max-w-2xl">{analysis.summary}</p></div>
+            <div className="flex items-center gap-2">
+                <button onClick={onTogglePresentation} className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-md text-sm font-medium transition-colors"><EyeIcon className="w-4 h-4" /><span>Presentation</span></button>
+                <div className="relative">
+                    <button onClick={() => setIsExportMenuOpen(v => !v)} disabled={isProcessing} className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-md text-sm font-medium transition-colors disabled:opacity-50"><DownloadIcon className="w-4 h-4" /><span>{isProcessing ? 'Exporting...' : 'Export'}</span><ChevronDownIcon className="w-4 h-4" /></button>
+                    <AnimatePresence>{isExportMenuOpen && (<motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="absolute right-0 mt-2 w-56 bg-slate-700 border border-slate-600 rounded-md shadow-lg z-10 p-2"><button onClick={() => { onExport('png'); setIsExportMenuOpen(false); }} className="w-full text-left py-2 px-3 text-sm hover:bg-slate-600 rounded">Export as PNG</button><button onClick={() => { onExport('jpeg'); setIsExportMenuOpen(false); }} className="w-full text-left py-2 px-3 text-sm hover:bg-slate-600 rounded">Export as JPEG</button><button onClick={() => { onExport('pdf'); setIsExportMenuOpen(false); }} className="w-full text-left py-2 px-3 text-sm hover:bg-slate-600 rounded">Export as PDF</button><div className="border-t border-slate-600 my-2"></div><button onClick={() => { onAdvancedExport('powerbi'); setIsExportMenuOpen(false); }} className="w-full text-left py-2 px-3 text-sm hover:bg-slate-600 rounded">For Power BI</button><button onClick={() => { onAdvancedExport('tableau'); setIsExportMenuOpen(false); }} className="w-full text-left py-2 px-3 text-sm hover:bg-slate-600 rounded">For Tableau</button></motion.div>)}</AnimatePresence>
+                </div>
+                <button onClick={onReset} className="px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-md text-sm font-medium transition-colors">Start Over</button>
+            </div>
+        </header>
+    );
+};
+
+// =================================================================================
+//  6. SUB-COMPONENT: Presentation Mode View
+// =================================================================================
+const PresentationView: React.FC<{ charts: ChartSuggestion[]; data: CsvData; template: Template; currentIndex: number; onExit: () => void; }> = ({ charts, data, template, currentIndex, onExit }) => {
+    const chart = charts[currentIndex];
+    const color = template.colors.chartFills[currentIndex % template.colors.chartFills.length];
+    return (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-gray-900 z-40 flex flex-col p-8">
+            <header className="flex justify-between items-center w-full">
+                <div className="text-slate-300">
+                    <h2 className="text-xl font-bold" style={{ color: template.colors.primary }}>{chart.title}</h2>
+                    <p className="text-sm">Showing chart {currentIndex + 1} of {charts.length}</p>
+                </div>
+                <button onClick={onExit} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-md text-sm font-medium">Exit Presentation</button>
+            </header>
+            <main className="flex-grow flex items-center justify-center h-full w-full py-8">
+                <div className="w-full h-full max-w-6xl bg-slate-800 rounded-lg border border-slate-700 p-6">
+                    <RenderChart chart={chart} data={data} color={color} type={chart.chartType} />
+                </div>
+            </main>
+        </motion.div>
+    );
+};
+
+// =================================================================================
+//  MAIN DASHBOARD COMPONENT
+// =================================================================================
+interface DashboardProps { data: CsvData; fileName: string; analysis: AnalysisResult; template: Template; onReset: () => void; }
+
+const UpgradedDashboard: React.FC<DashboardProps> = ({ data, fileName, analysis, template, onReset }) => {
+    const rootRef = useRef<HTMLDivElement | null>(null);
+    const [modalContent, setModalContent] = useState<{ title: string; body: React.ReactNode } | null>(null);
+    const [activeFilters, setActiveFilters] = useState<Record<string, string>>({});
+    const [isProcessingExport, setIsProcessingExport] = useState(false);
+    const [presentationMode, setPresentationMode] = useState(false);
+    const [presentationIndex, setPresentationIndex] = useState(0);
+
+    const filteredData = useMemo(() => {
+        const filterKeys = Object.keys(activeFilters);
+        if (filterKeys.length === 0) return data;
+        return data.filter(row => filterKeys.every(key => activeFilters[key] === 'All' || String(row[key]) === activeFilters[key]));
+    }, [data, activeFilters]);
+
+    const kpis = useMemo(() => analysis.chartSuggestions.filter(c => c.chartType === 'kpi'), [analysis]);
+    const charts = useMemo(() => analysis.chartSuggestions.filter(c => c.chartType !== 'kpi'), [analysis]);
+    
+    useEffect(() => {
+        if (presentationMode && charts.length > 1) {
+            const interval = setInterval(() => {
+                setPresentationIndex(prev => (prev + 1) % charts.length);
+            }, 5000);
+            return () => clearInterval(interval);
+        }
+    }, [presentationMode, charts.length]);
+
+    const exportDashboard = useCallback(async (format: 'png' | 'jpeg' | 'pdf') => {
+        if (!rootRef.current) return;
+        setIsProcessingExport(true);
+        try {
+            const canvas = await html2canvas(rootRef.current, { scale: 2, useCORS: true, backgroundColor: '#111827' });
+            if (format === 'pdf') {
+                const imgData = canvas.toDataURL('image/png');
+                const pdf = new jsPDF({ orientation: 'landscape', unit: 'px', format: [canvas.width, canvas.height] });
+                pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+                pdf.save(`AutoBI_Dashboard.pdf`);
+            } else {
+                const link = document.createElement('a'); link.href = canvas.toDataURL(`image/${format}`); link.download = `AutoBI_Dashboard.${format}`; link.click();
+            }
+        } finally { setIsProcessingExport(false); }
+    }, []);
+
+    const handleAdvancedExport = async (type: 'powerbi' | 'tableau') => {
+        setIsProcessingExport(true);
+        await new Promise(res => setTimeout(res, 600));
+        if (type === 'powerbi') { exportForPowerBI(analysis, data, fileName); setModalContent({ title: 'Power BI Guide Downloaded', body: <div className="text-sm">A Power BI JSON guide has been exported.</div> }); }
+        else { exportForTableau(analysis, fileName); setModalContent({ title: 'Tableau Workbook Downloaded', body: <div className="text-sm">A .twb file has been exported.</div> }); }
+        setIsProcessingExport(false);
+    };
+
+    return (
+        <div className="bg-gray-900 text-slate-200 min-h-screen font-sans">
+            <AnimatePresence>{modalContent && <Modal title={modalContent.title} onClose={() => setModalContent(null)}>{modalContent.body}</Modal>}</AnimatePresence>
+            <AnimatePresence>{presentationMode && <PresentationView charts={charts} data={filteredData} template={template} currentIndex={presentationIndex} onExit={() => setPresentationMode(false)} />}</AnimatePresence>
+            <div className="p-4 md:p-6 lg:p-8" ref={rootRef}>
+                <DashboardHeader analysis={analysis} template={template} isProcessing={isProcessingExport} onExport={exportDashboard} onAdvancedExport={handleAdvancedExport} onReset={onReset} onTogglePresentation={() => setPresentationMode(true)} />
+                <main className="grid grid-cols-12 gap-6 mt-6">
+                    <Sidebar analysis={analysis} data={data} onFilterChange={setActiveFilters} />
+                    <section className="col-span-12 lg:col-span-9 space-y-6">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                            {kpis.map((k, i) => {
+                                const value = filteredData.reduce((s, r) => s + (Number(r[k.y_axis]) || 0), 0);
+                                const series = filteredData.slice(-30).map(r => Number(r[k.y_axis]) || 0);
+                                return <KPI key={i} title={k.title} value={value} series={series} color={template.colors.chartFills[i % template.colors.chartFills.length]} />;
+                            })}
+                        </div>
+                        <div className="grid grid-cols-1 gap-6">
+                            {charts.map((chart, idx) => (
+                                <ChartCard key={idx} chart={chart} data={filteredData} color={template.colors.chartFills[idx % template.colors.chartFills.length]} />
+                            ))}
+                        </div>
+                    </section>
+                </main>
+                <footer className="mt-8 text-center text-xs text-gray-500">Generated by AutoBI • {new Date().toLocaleString()}</footer>
+            </div>
+        </div>
+    );
+};
+
+export default UpgradedDashboard;
